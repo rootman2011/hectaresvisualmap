@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  
+  <title>Calculadora Visual de Hectáreas</title>
+  <meta name="description" content="Una herramienta interactiva para visualizar y medir terrenos. Ingresa una cantidad de hectáreas y ajusta la forma del polígono arrastrando sus vértices.">
+
+  <script>
+    // Evita el FOUC (Flash Of Unstyled Content) aplicando el tema antes de que se renderice la página.
+    (function() {
+      const theme = localStorage.getItem('theme') || 'light';
+      if (theme === 'dark') {
+        document.documentElement.classList.add('dark');
+      }
+    })();
+  </script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    :root { /* Light Mode */
+      --primary: 167 79% 43%;        /* teal-500: #14b8a6 */
+      --primary-focus: 173 83% 31%;   /* teal-600: #0d9488 */
+      --secondary: 220 8% 52%;        /* gray-500: #6b7280 */
+      --base-100: 0 0% 100%;           /* white */
+      --base-200: 225 17% 96%;        /* gray-100: #f3f4f6 */
+      --base-content: 215 28% 17%;    /* gray-800: #1f2937 */
+    }
+    .dark { /* Dark Mode */
+      --primary: 167 79% 43%;        /* teal-500: #14b8a6 */
+      --primary-focus: 173 83% 31%;   /* teal-600: #0d9488 */
+      --secondary: 215 14% 34%;       /* gray-700: #374151 */
+      --base-100: 215 28% 17%;        /* gray-800: #1f2937 */
+      --base-200: 222 39% 11%;        /* gray-900: #111827 */
+      --base-content: 216 33% 97%;    /* gray-50:  #f9fafb */
+    }
+    body {
+      background-color: hsl(var(--base-200));
+      color: hsl(var(--base-content));
+      transition: background-color 0.3s ease, color 0.3s ease;
+    }
+    #app-main-content {
+        min-height: calc(100vh - 64px - 85px); /* Full height minus header and footer */
+    }
+  </style>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            'primary': 'hsl(var(--primary))',
+            'primary-focus': 'hsl(var(--primary-focus))',
+            'secondary': 'hsl(var(--secondary))',
+            'base-100': 'hsl(var(--base-100))',
+            'base-200': 'hsl(var(--base-200))',
+            'base-content': 'hsl(var(--base-content))',
+          },
+          fontFamily: {
+            sans: ['Inter', 'sans-serif'],
+          }
+        }
+      }
+    }
+  </script>
+  <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌱</text></svg>">
+</head>
+<body class="font-sans">
+
+  <div id="app"></div>
+
+  <script type="module">
+    const $ = (selector) => document.querySelector(selector);
+    const $$ = (selector) => document.querySelectorAll(selector);
+
+    // --- STATE & HELPERS ---
+    const appState = {
+        theme: localStorage.getItem('theme') || 'light',
+    };
+
+    const updateMetadata = (title, description) => {
+        document.title = title;
+        $('meta[name="description"]').setAttribute('content', description);
+    };
+
+    // --- TEMPLATES / COMPONENTS ---
+    const createHeader = () => {
+      return `
+        <header class="bg-base-100 shadow-lg sticky top-0 z-50">
+          <nav class="container mx-auto px-4">
+            <div class="flex items-center justify-between h-16">
+              <div class="flex-shrink-0">
+                 <div class="flex items-center space-x-2">
+                    <span class="text-2xl">🌱</span>
+                    <span class="text-xl font-bold text-base-content whitespace-nowrap">Calculadora Visual de Hectáreas</span>
+                 </div>
+              </div>
+              <div class="flex items-center">
+                <button id="theme-switcher" class="p-2 rounded-full text-base-content hover:bg-secondary/20 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-base-100 focus:ring-primary"
+        aria-label="Cambiar tema">
+                    <span id="theme-icon-container"></span>
+                </button>
+              </div>
+            </div>
+          </nav>
+        </header>
+      `;
+    };
+
+    const createFooter = () => {
+      const currentYear = new Date().getFullYear();
+      return `
+        <footer class="bg-base-100 border-t border-secondary/50">
+          <div class="container mx-auto px-4 py-6 text-center text-gray-400">
+            <p>&copy; ${currentYear} Calculadora Visual de Hectáreas. Todos los derechos reservados.</p>
+            <p class="text-sm mt-1">Creado con ❤️ y código.</p>
+          </div>
+        </footer>
+      `;
+    };
+    
+    const createHectareCalculatorPage = () => {
+        return `
+            <div id="hectare-calculator-container" class="w-full max-w-6xl mx-auto bg-base-100 rounded-2xl shadow-2xl shadow-base-200/80 overflow-hidden relative">
+                <!-- Content will be populated by JS -->
+            </div>
+        `;
+    }
+    
+    // --- EVENT LISTENERS ATTACHMENT ---
+    const attachHectareListeners = () => {
+        const container = $('#hectare-calculator-container');
+        if(!container) return;
+        
+        let language = 'es';
+        let points = [];
+        let inputValue = '1';
+        let draggedPointRef = null;
+        let isDragging = false;
+        let frozenDynamicSizes = null;
+
+        const translations = {
+            es: { title: 'Calculadora Visual de Hectáreas', subtitle: '¿Alguna vez te has preguntado cómo se ve una hectárea? Ingresa un valor, visualiza el terreno y ajusta su forma interactivamente.', hectaresLabel: 'Introduce la cantidad de hectáreas (ha)', hectaresPlaceholder: 'Ej: 1.5', totalArea: 'Área Total (m²)', maxWidth: 'Ancho Máx.', maxLength: 'Largo Máx.', metersUnit: 'metros', hectareConversion: '*1 hectárea (ha) equivale a 10,000 metros cuadrados (m²).', howToTitle: '¿Cómo funciona?', howToStep1: '<strong>1. Ingresa Hectáreas:</strong> Empieza escribiendo un valor en el campo de entrada para ver un terreno cuadrado.', howToStep2: '<strong>2. Arrastra los Vértices:</strong> Mueve los círculos blancos para cambiar la forma del polígono.', howToStep3: '<strong>3. Añade Puntos:</strong> Haz clic en un círculo semitransparente en medio de una línea para crear un nuevo vértice.', visualizerPlaceholder: 'Introduce un valor para visualizar el terreno', hectaresUnit: 'hectáreas', hectaresArea: 'Área (Hectáreas)', hectaresUnitShort: 'ha' },
+            en: { title: 'Visual Hectare Calculator', subtitle: 'Ever wondered what a hectare looks like? Enter a value, see the plot of land, and adjust its shape interactively.', hectaresLabel: 'Enter the amount of hectares (ha)', hectaresPlaceholder: 'Ex: 1.5', totalArea: 'Total Area (m²)', maxWidth: 'Max Width', maxLength: 'Max Length', metersUnit: 'meters', hectareConversion: '*1 hectare (ha) equals 10,000 square meters (m²).', howToTitle: 'How It Works', howToStep1: '<strong>1. Enter Hectares:</strong> Start by typing a value in the input field to see a square plot.', howToStep2: '<strong>2. Drag the Corners:</strong> Move the white circles to change the polygon\'s shape.', howToStep3: '<strong>3. Add Points:</strong> Click a semi-transparent circle on a line\'s midpoint to create a new corner.', visualizerPlaceholder: 'Enter a value to visualize the land', hectaresUnit: 'hectares', hectaresArea: 'Area (Hectares)', hectaresUnitShort: 'ha' }
+        };
+
+        const calculatePolygonArea = (pts) => {
+            let area = 0;
+            const n = pts.length;
+            if (n < 3) return 0;
+            for (let i = 0; i < n; i++) {
+                area += pts[i].x * pts[(i + 1) % n].y - pts[(i + 1) % n].x * pts[i].y;
+            }
+            return Math.abs(area / 2.0);
+        };
+
+        const createSquareFromArea = (sqMeters) => {
+            if (sqMeters <= 0) return [];
+            const side = Math.sqrt(sqMeters);
+            return [{ x: 0, y: 0 }, { x: side, y: 0 }, { x: side, y: side }, { x: 0, y: side }];
+        };
+
+        const render = (isLiveUpdate = false, onlyDataUpdate = false) => {
+            const t = translations[language];
+            const area = calculatePolygonArea(points);
+            let dynamicSizes;
+            
+            const formatNumber = (num) => new Intl.NumberFormat(language, { maximumFractionDigits: 2 }).format(num);
+            const formatHectares = (num) => new Intl.NumberFormat(language, { maximumFractionDigits: 4 }).format(num);
+
+            if (isLiveUpdate && frozenDynamicSizes) {
+                dynamicSizes = frozenDynamicSizes;
+            } else {
+                let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+                if (points.length > 0) {
+                    points.forEach(p => { minX = Math.min(minX, p.x); minY = Math.min(minY, p.y); maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y); });
+                } else { minX = minY = maxX = maxY = 0; }
+                
+                const dimensions = { width: points.length > 0 ? maxX - minX : 0, height: points.length > 0 ? maxY - minY : 0 };
+                const padding = Math.max(dimensions.width, dimensions.height) * 0.3 + 10;
+                const viewBoxWidth = dimensions.width + padding;
+                const viewBoxHeight = dimensions.height + padding;
+                const mainFontSize = Math.min(viewBoxWidth * 0.04, viewBoxHeight * 0.1);
+                
+                dynamicSizes = { 
+                    viewBox: `${minX - padding / 2} ${minY - padding / 2} ${viewBoxWidth} ${viewBoxHeight}`, 
+                    handleRadius: viewBoxWidth * 0.018, 
+                    strokeWidth: viewBoxWidth * 0.004, 
+                    fontSize: mainFontSize, 
+                    labelFontSize: mainFontSize * 0.65 
+                };
+
+                if (isDragging) {
+                    frozenDynamicSizes = dynamicSizes;
+                }
+            }
+            
+            const centerPoint = points.reduce((acc, p) => ({x: acc.x + p.x, y: acc.y + p.y}), {x:0, y:0});
+            if (points.length > 0) { centerPoint.x /= points.length; centerPoint.y /= points.length; }
+
+            // SVG Content Generation
+            let svgContent = '';
+            if (points.length > 0) {
+                 if(points.length > 2) {
+                     svgContent += `<polygon points="${points.map(p => `${p.x.toFixed(2)},${p.y.toFixed(2)}`).join(' ')}" class="fill-primary/80 stroke-primary-focus" stroke-width="${dynamicSizes.strokeWidth}" />`;
+                 }
+                 if(points.length > 1) {
+                    points.forEach((p1, i) => {
+                        const p2 = points[(i + 1) % points.length];
+                        const length = Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
+                        const midPoint = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
+                        let angle = Math.atan2(p2.y - p1.y, p2.x - p1.x) * (180 / Math.PI);
+                        if (angle > 90 || angle < -90) angle += 180;
+                        
+                        svgContent += `<g class="edge-group" data-index="${i}">`;
+                        if (length > dynamicSizes.handleRadius * 4) {
+                           svgContent += `<text x="${midPoint.x}" y="${midPoint.y}" transform="rotate(${angle}, ${midPoint.x}, ${midPoint.y})" dy="${-dynamicSizes.handleRadius * 0.8}" font-size="${dynamicSizes.labelFontSize}" class="fill-base-content font-sans pointer-events-none" font-weight="500" text-anchor="middle" dominant-baseline="central">${length.toFixed(1)}m</text>`;
+                        }
+                        svgContent += `<circle class="midpoint-handle" cx="${midPoint.x}" cy="${midPoint.y}" r="${dynamicSizes.handleRadius * 0.8}" class="fill-base-200/60 hover:fill-base-200 transition-colors cursor-pointer" data-index="${i}" />`;
+                        svgContent += `</g>`;
+                    });
+                 }
+                points.forEach((p, i) => {
+                     svgContent += `<circle class="vertex-handle" cx="${p.x}" cy="${p.y}" r="${dynamicSizes.handleRadius}" class="fill-white stroke-2 stroke-primary-focus cursor-grab" data-index="${i}" />`;
+                });
+                if(area > 1 && points.length > 2) {
+                    svgContent += `<text x="${centerPoint.x}" y="${centerPoint.y}" font-size="${dynamicSizes.fontSize}" font-weight="bold" class="fill-white font-mono pointer-events-none" text-anchor="middle" dominant-baseline="central">${area.toLocaleString(language, {maximumFractionDigits: 0})} m²</text>`;
+                }
+            } else {
+                svgContent = `<text x="50%" y="50%" text-anchor="middle" dominant-baseline="middle" class="fill-gray-500 select-none" font-size="${dynamicSizes.fontSize * 2.5}">${t.visualizerPlaceholder}</text>`;
+            }
+
+            if (onlyDataUpdate) {
+                // --- DATA-ONLY UPDATE PATH ---
+                // This path updates existing DOM elements without re-rendering the whole component.
+                // This fixes the input focus issue.
+
+                // Update input value only if not focused (e.g., during drag)
+                const inputEl = $('#hectares-input');
+                if (document.activeElement !== inputEl) {
+                    const hectares = area / 10000;
+                    const formattedHectares = new Intl.NumberFormat(language, {minimumFractionDigits: 0, maximumFractionDigits: 4}).format(Number(hectares.toFixed(4)));
+                    inputEl.value = formattedHectares;
+                    inputValue = formattedHectares;
+                }
+                
+                // Update metrics cards
+                const cardsContainer = container.querySelector('.grid.grid-cols-2.gap-4');
+                if (cardsContainer) {
+                    const dimensions = { width: points.length > 0 ? Math.max(...points.map(p => p.x)) - Math.min(...points.map(p => p.x)) : 0, height: points.length > 0 ? Math.max(...points.map(p => p.y)) - Math.min(...points.map(p => p.y)) : 0 };
+                    const values = [
+                        formatHectares(area / 10000),
+                        formatNumber(area),
+                        formatNumber(dimensions.width),
+                        formatNumber(dimensions.height)
+                    ];
+                    cardsContainer.querySelectorAll('p > span:first-child').forEach((span, index) => {
+                        if (values[index] !== undefined) span.textContent = values[index];
+                    });
+                }
+                
+                // Update SVG
+                const svg = $('#hectare-svg');
+                const visualizer = $('#visualizer');
+                if (svg && visualizer) {
+                    visualizer.title = `${(area/10000).toLocaleString(language, { maximumFractionDigits: 4 })} ${t.hectaresUnit}`;
+                    svg.setAttribute('viewBox', dynamicSizes.viewBox);
+                    svg.innerHTML = svgContent;
+                }
+                return;
+            }
+
+            // --- FULL RENDER PATH ---
+            // This path is used for initial load and language changes.
+            const infoCard = ({ title, value, unit, icon }) => `<div class="bg-base-200 rounded-xl p-4 flex items-center space-x-4 border border-secondary/50 hover:shadow-md transition-shadow"><div class="bg-base-100 p-3 rounded-full border border-secondary/50">${icon}</div><div><h3 class="text-sm font-medium text-gray-400">${title}</h3><p class="text-xl font-semibold text-base-content"><span>${value}</span> <span class="text-base font-normal text-gray-400">${unit}</span></p></div></div>`;
+            const iconArea = `<svg xmlns="http://www.w3.org/2000/svg" class="w-8 h-8 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5"></path></svg>`;
+            const iconWidth = `<svg xmlns="http://www.w3.org/2000/svg" class="w-8 h-8 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 12h16M4 10v4m16-4v4"></path></svg>`;
+            const iconLength = `<svg xmlns="http://www.w3.org/2000/svg" class="w-8 h-8 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16M10 4h4m-4 16h4"></path></svg>`;
+            
+            const dimensions = { width: points.length > 0 ? Math.max(...points.map(p => p.x)) - Math.min(...points.map(p => p.x)) : 0, height: points.length > 0 ? Math.max(...points.map(p => p.y)) - Math.min(...points.map(p => p.y)) : 0 };
+
+            container.innerHTML = `
+                <div class="absolute top-4 right-4 z-10 flex space-x-1 bg-base-200 p-1 rounded-full">
+                    <button id="lang-es" class="px-3 py-1 text-sm font-semibold rounded-full transition-colors ${language === 'es' ? 'bg-base-100 text-primary shadow-sm' : 'text-base-content/60 hover:text-base-content'}">ES</button>
+                    <button id="lang-en" class="px-3 py-1 text-sm font-semibold rounded-full transition-colors ${language === 'en' ? 'bg-base-100 text-primary shadow-sm' : 'text-base-content/60 hover:text-base-content'}">EN</button>
+                </div>
+                <div class="grid md:grid-cols-2">
+                    <div class="p-8 lg:p-12 border-r border-base-200 flex flex-col justify-center">
+                        <header class="mb-8">
+                            <h1 class="text-3xl sm:text-4xl font-extrabold text-primary">${t.title}</h1>
+                            <p class="mt-3 text-gray-400 text-lg">${t.subtitle}</p>
+                        </header>
+                        <div class="space-y-6">
+                            <div>
+                                <label for="hectares-input" class="block text-sm font-medium text-base-content mb-2">${t.hectaresLabel}</label>
+                                <input type="number" id="hectares-input" value="${inputValue}" placeholder="${t.hectaresPlaceholder}" class="w-full p-4 bg-base-200 border border-secondary/50 rounded-lg text-xl focus:ring-2 focus:ring-primary focus:border-primary transition duration-150 ease-in-out">
+                            </div>
+                            <div class="grid grid-cols-2 gap-4">
+                                ${infoCard({ title: t.hectaresArea, value: formatHectares(area / 10000), unit: t.hectaresUnitShort, icon: iconArea })}
+                                ${infoCard({ title: t.totalArea, value: formatNumber(area), unit: "m²", icon: iconArea })}
+                                ${infoCard({ title: t.maxWidth, value: formatNumber(dimensions.width), unit: t.metersUnit, icon: iconWidth })}
+                                ${infoCard({ title: t.maxLength, value: formatNumber(dimensions.height), unit: t.metersUnit, icon: iconLength })}
+                            </div>
+                            <div class="pt-6 border-t border-secondary/50">
+                                <h3 class="text-lg font-semibold text-base-content mb-3">${t.howToTitle}</h3>
+                                <ul class="space-y-2 text-gray-400 text-sm">
+                                    <li>${t.howToStep1}</li>
+                                    <li>${t.howToStep2}</li>
+                                    <li>${t.howToStep3}</li>
+                                </ul>
+                                <p class="text-xs text-gray-500 mt-4">${t.hectareConversion}</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="visualizer" class="p-4 lg:p-6 flex items-center justify-center min-h-[400px] md:min-h-0 relative bg-base-200" title="${(area/10000).toLocaleString(language, { maximumFractionDigits: 4 })} ${t.hectaresUnit}" style="background-image: linear-gradient(rgba(107, 114, 128, 0.4) 1px, transparent 1px), linear-gradient(to right, rgba(107, 114, 128, 0.4) 1px, transparent 1px); background-size: 20px 20px;">
+                        <svg id="hectare-svg" class="w-full h-full touch-none" preserveAspectRatio="xMidYMid meet" viewBox="${dynamicSizes.viewBox}"></svg>
+                    </div>
+                </div>
+            `;
+            
+            const svg = $('#hectare-svg');
+            svg.innerHTML = svgContent;
+        };
+        
+        const getMousePosition = (e) => {
+            const svg = $('#hectare-svg');
+            if (!svg) return { x: 0, y: 0 };
+            const CTM = svg.getScreenCTM();
+            if (!CTM) return { x: 0, y: 0 };
+            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+            const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+            const svgPoint = svg.createSVGPoint();
+            svgPoint.x = clientX;
+            svgPoint.y = clientY;
+            const transformedPoint = svgPoint.matrixTransform(CTM.inverse());
+            return { x: transformedPoint.x, y: transformedPoint.y };
+        };
+
+        const handleDragMove = (e) => {
+            if (!draggedPointRef) return;
+            if (e.cancelable) e.preventDefault();
+            const newPos = getMousePosition(e);
+            points = points.map((p, i) => i === draggedPointRef.index ? newPos : p);
+            render(true, true); // Use data-only update
+        };
+
+        const endDrag = () => {
+            if (!draggedPointRef) return;
+            $('#visualizer')?.classList.remove('cursor-grabbing');
+            window.removeEventListener('mousemove', handleDragMove);
+            window.removeEventListener('touchmove', handleDragMove);
+            window.removeEventListener('mouseup', endDrag);
+            window.removeEventListener('touchend', endDrag);
+
+            if (isDragging) {
+                isDragging = false;
+                frozenDynamicSizes = null;
+                render(false, true); // Rerender data with final quality
+            }
+            draggedPointRef = null;
+        };
+
+        const startDrag = (e, index, type) => {
+            e.stopPropagation();
+            isDragging = true;
+            if (type === 'midpoint') {
+                const p1 = points[index];
+                const p2 = points[(index + 1) % points.length];
+                const newPoint = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
+                const newIndex = index + 1;
+                points.splice(newIndex, 0, newPoint);
+                draggedPointRef = { index: newIndex, type: 'vertex' };
+            } else {
+                draggedPointRef = { index, type: 'vertex' };
+            }
+            $('#visualizer')?.classList.add('cursor-grabbing');
+            window.addEventListener('mousemove', handleDragMove);
+            window.addEventListener('touchmove', handleDragMove, { passive: false });
+            window.addEventListener('mouseup', endDrag);
+            window.addEventListener('touchend', endDrag);
+            render(true, true);
+        };
+        
+        container.addEventListener('click', (e) => {
+            const button = e.target.closest('button');
+            if (!button) return;
+            if (button.id === 'lang-es') { language = 'es'; render(); }
+            if (button.id === 'lang-en') { language = 'en'; render(); }
+        });
+
+        container.addEventListener('input', (e) => {
+            if (e.target.id === 'hectares-input') {
+                inputValue = e.target.value;
+                const numHectares = parseFloat(inputValue.replace(',', '.'));
+                if (!isNaN(numHectares) && numHectares >= 0) {
+                    points = createSquareFromArea(numHectares * 10000);
+                } else if (inputValue === '') {
+                    points = [];
+                }
+                render(false, true); // Use data-only update
+            }
+        });
+
+        const handleInteractionStart = (e) => {
+            const target = e.target;
+            const isVertex = target.classList.contains('vertex-handle');
+            const isMidpoint = target.classList.contains('midpoint-handle');
+            if (isVertex || isMidpoint) {
+                const index = parseInt(target.dataset.index);
+                startDrag(e, index, isVertex ? 'vertex' : 'midpoint');
+            }
+        };
+
+        container.addEventListener('mousedown', handleInteractionStart);
+        container.addEventListener('touchstart', handleInteractionStart, { passive: false });
+
+        points = createSquareFromArea(1 * 10000);
+        render(); // Initial full render
+    };
+
+    // --- INITIALIZATION ---
+    document.addEventListener('DOMContentLoaded', () => {
+        const app = $('#app');
+        
+        const pageTitle = "Calculadora Visual de Hectáreas";
+        const pageDescription = "Una herramienta interactiva para visualizar y medir terrenos. Ingresa una cantidad de hectáreas y ajusta la forma del polígono arrastrando sus vértices.";
+        updateMetadata(pageTitle, pageDescription);
+        
+        app.innerHTML = `
+            ${createHeader()}
+            <main id="app-main-content" class="flex-grow container mx-auto px-4 py-8 md:py-12 flex items-center justify-center">
+                ${createHectareCalculatorPage()}
+            </main>
+            ${createFooter()}
+        `;
+        
+        const updateThemeIcon = () => {
+            const isDark = document.documentElement.classList.contains('dark');
+            const icon = isDark 
+                ? `<svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3v1m0 16v1m8.66-13.66l-.7.7M4.34 19.66l-.7.7M21 12h-1M3 12H2m16.66 7.66l-.7-.7M4.34 4.34l-.7-.7" /></svg>`
+                : `<svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M20.354 15.354A9 9 0 118.646 3.646 7 7 0 0020.354 15.354z" /></svg>`;
+            $('#theme-icon-container').innerHTML = icon;
+        };
+
+        $('#theme-switcher').addEventListener('click', () => {
+            appState.theme = appState.theme === 'light' ? 'dark' : 'light';
+            document.documentElement.classList.toggle('dark');
+            localStorage.setItem('theme', appState.theme);
+            updateThemeIcon();
+        });
+        
+        updateThemeIcon();
+        attachHectareListeners();
+    });
+
+  </script>
+</body>
+</html>
